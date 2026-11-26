@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PESU Unlocker</title>
+  <style>
+    :root {
+      --bg: #191a1c;
+      --bar: #212226;
+      --line: #34363b;
+      --ink: #e7e6e1;
+      --muted: #9a9c9e;
+      --accent: #d3a963;
+      --accent-dim: #6b5733;
+      --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+      --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      width: 250px;
+      margin: 0;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 12.5px;
+      line-height: 1.5;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-family: var(--serif);
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bar);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .row span { color: var(--ink); }
+
+    .switch {
+      position: relative;
+      flex: 0 0 auto;
+      width: 32px;
+      height: 18px;
+    }
+
+    .switch input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .track {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: #33353b;
+      transition: background 0.18s ease;
+      pointer-events: none;
+    }
+
+    .track::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #a9a8a2;
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    .switch input:checked + .track { background: var(--accent-dim); }
+    .switch input:checked + .track::after {
+      transform: translateX(14px);
+      background: var(--accent);
+    }
+
+    .switch input:focus-visible + .track {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .hint {
+      margin: 10px 2px 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <h1>PESU Unlocker</h1>
+
+  <label class="row" for="dark">
+    <span>Dark mode</span>
+    <span class="switch">
+      <input type="checkbox" id="dark" />
+      <span class="track" aria-hidden="true"></span>
+    </span>
+  </label>
+
+  <p class="hint">Applies to PESU Academy pages (PDF documents keep their original colours). Attendance tables get a 75% plan column automatically.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
