@@ -15,7 +15,8 @@
   ],
   "host_permissions": [
     "https://www.pesuacademy.com/*",
-    "https://files.pesuacademy.com/*"
+    "https://files.pesuacademy.com/*",
+    "http://1.6.83.11:8081/*"
   ],
   "background": {
     "service_worker": "background.js"

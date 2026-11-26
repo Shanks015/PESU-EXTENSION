@@ -72,4 +72,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return true;
   }
+
+  if (request.action === "FETCH_PYQ") {
+    (async () => {
+      try {
+        const response = await fetch(request.url, { method: "GET" });
+        const text = await response.text();
+        sendResponse({ ok: true, html: text, status: response.status });
+      } catch (err) {
+        sendResponse({ ok: false, error: err.message || String(err) });
+      }
+    })();
+    return true;
+  }
 });
