@@ -1,6 +1,6 @@
 // Extra helpers for PESU Academy:
-//   1. PYQ search: list subjects in the course and fetch all question papers
-//      for a subject from the PESU library Koha OPAC.
+//   1. PYQ search: on the MyCourses page, list each course and fetch all its
+//      question papers from the PESU library Koha OPAC.
 //   2. Desktop notifications when a course page gains new slides/assignments.
 (function () {
   "use strict";
@@ -12,38 +12,39 @@
   const SEEN_KEY = "pesuSeenItems";
   const PYQ_BASE = "http://1.6.83.11:8081/cgi-bin/koha/opac-search.pl";
 
-  /* ───────────── subject detection ───────────── */
+  /* ───────────── course/subject detection (MyCourses page) ───────────── */
 
-  function cleanSubject(raw) {
-    return String(raw || "")
-      .replace(/\s+/g, " ")
-      .replace(/profile\s*\|\s*mycourses/gi, "")
-      .replace(/[^\w\s&\-().]/g, "")
-      .trim()
-      .slice(0, 80);
+  // PESU renders courses as rows: <tr id="rowWiseCourseContent_..."> with
+  // cells: [Course Code, Course Title, Course Type, Status, Action].
+  function courseRows() {
+    return Array.from(document.querySelectorAll('tr[id^="rowWiseCourseContent_"]'));
   }
 
-  const GENERIC = /^(home|dashboard|profile|mycourses|courses|subjects|units?|modules?|notes?|slides?|assignments?|attendance|results?|grade|settings|logout|login)$/i;
+  function courseTitle(row) {
+    const cells = row.querySelectorAll("td");
+    // second cell holds the title (with possible whitespace/newlines)
+    const raw = cells.length >= 2 ? cells[1].textContent : "";
+    return String(raw || "").replace(/\s+/g, " ").trim();
+  }
+
+  function courseCode(row) {
+    const cells = row.querySelectorAll("td");
+    const raw = cells.length >= 1 ? cells[0].textContent : "";
+    return String(raw || "").replace(/\s+/g, " ").trim().split(/\s/)[0];
+  }
 
   function detectSubjects() {
     const set = new Set();
-    const selectors = [
-      "h1", "h2", "h3", "h4",
-      "li", "td", "th",
-      ".subject", ".course", ".course-name", ".subject-name",
-      "[class*='subject']", "[class*='course']",
-    ];
-    document.querySelectorAll(selectors.join(",")).forEach((el) => {
-      // Only leaf-ish text nodes.
-      if (el.children.length > 3) return;
-      const text = cleanSubject(el.textContent);
-      if (!text || text.length < 4 || text.length > 60) return;
-      if (GENERIC.test(text)) return;
-      // Skip if it's just a number or very short.
-      if (/^\d+$/.test(text)) return;
-      set.add(text);
+    courseRows().forEach((row) => {
+      const t = courseTitle(row);
+      if (t && t.length >= 4) set.add(t);
     });
-    return Array.from(set).slice(0, 40);
+    return Array.from(set);
+  }
+
+  function guessSubject() {
+    const subs = detectSubjects();
+    return subs.length ? subs[0] : "";
   }
 
   /* ───────────── Koha PYQ search ───────────── */
@@ -62,7 +63,6 @@
     }
     const links = doc.querySelectorAll("a[href*='biblionumber']");
     links.forEach((a) => {
-      // Only the title links have class 'title'.
       if (!a.classList.contains("title")) return;
       const title = (a.textContent || "").replace(/\s+/g, " ").trim();
       let href = a.getAttribute("href") || "";
@@ -109,7 +109,7 @@
       position: "fixed",
       right: "16px",
       bottom: "60px",
-      width: "420px",
+      width: "440px",
       maxHeight: "70vh",
       overflow: "auto",
       zIndex: "2147483647",
@@ -134,7 +134,7 @@
     header.style.alignItems = "center";
     header.style.marginBottom = "8px";
     const title = document.createElement("strong");
-    title.textContent = "Subjects in this course";
+    title.textContent = "Courses in this semester";
     const close = document.createElement("button");
     close.textContent = "✕";
     close.style.background = "transparent";
@@ -149,13 +149,13 @@
 
     if (!subjects || subjects.length === 0) {
       const empty = document.createElement("div");
-      empty.textContent = "No subjects detected on this page.";
+      empty.textContent = "No courses detected on this page.";
       p.appendChild(empty);
       return;
     }
 
     const hint = document.createElement("div");
-    hint.textContent = "Click a subject to fetch all its question papers:";
+    hint.textContent = "Click a course to fetch all its question papers:";
     hint.style.color = "#9a9c9e";
     hint.style.marginBottom = "6px";
     p.appendChild(hint);
@@ -181,7 +181,6 @@
     });
     p.appendChild(list);
 
-    // Manual input.
     const row = document.createElement("div");
     row.style.display = "flex";
     row.style.gap = "6px";
@@ -228,7 +227,7 @@
     const title = document.createElement("strong");
     title.textContent = `QPs: ${subject}`;
     const back = document.createElement("button");
-    back.textContent = "← subjects";
+    back.textContent = "← courses";
     back.style.background = "transparent";
     back.style.color = "#9a9c9e";
     back.style.border = "none";
@@ -302,6 +301,47 @@
     fetchPyqs(subject, (results, url) => showResults(subject, results, url));
   }
 
+  /* ───────────── inline PYQ links on course rows ───────────── */
+
+  function injectInlinePyqLinks() {
+    courseRows().forEach((row) => {
+      if (row.dataset.pesuPyq === "1") return;
+      const title = courseTitle(row);
+      if (!title) return;
+      row.dataset.pesuPyq = "1";
+
+      // Put the link in the Action cell (last td) to avoid row click navigation.
+      const cells = row.querySelectorAll("td");
+      const actionCell = cells.length >= 5 ? cells[cells.length - 1] : cells[cells.length - 1];
+      if (!actionCell) return;
+
+      const link = document.createElement("a");
+      link.textContent = "PYQs";
+      link.href = "#";
+      Object.assign(link.style, {
+        display: "inline-block",
+        padding: "2px 8px",
+        background: "#d3a963",
+        color: "#1b1a17",
+        borderRadius: "4px",
+        textDecoration: "none",
+        fontSize: "11px",
+        fontWeight: "600",
+        cursor: "pointer",
+      });
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pickSubject(title);
+      });
+      // Avoid triggering row onclick.
+      link.addEventListener("mousedown", (e) => e.stopPropagation());
+      actionCell.appendChild(link);
+    });
+  }
+
+  /* ───────────── floating button ───────────── */
+
   function injectPyqButton() {
     if (document.getElementById("pesu-pyq-btn")) return;
 
@@ -309,7 +349,7 @@
     btn.id = "pesu-pyq-btn";
     btn.type = "button";
     btn.textContent = "PYQs";
-    btn.title = "Browse previous-year question papers by subject";
+    btn.title = "Browse previous-year question papers by course";
     Object.assign(btn.style, {
       position: "fixed",
       right: "16px",
@@ -330,28 +370,6 @@
     });
 
     (document.body || document.documentElement).appendChild(btn);
-  }
-
-  function injectInlinePyqLinks() {
-    const titles = document.querySelectorAll("h3, h4, .subject, .course-name");
-    titles.forEach((el) => {
-      if (el.dataset.pesuPyq === "1") return;
-      const text = cleanSubject(el.textContent);
-      if (!text || text.length < 4 || text.length > 80) return;
-      if (GENERIC.test(text)) return;
-      el.dataset.pesuPyq = "1";
-
-      const link = document.createElement("a");
-      link.textContent = " (PYQs)";
-      link.href = "#";
-      link.style.fontSize = "0.85em";
-      link.style.marginLeft = "6px";
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        pickSubject(text);
-      });
-      el.appendChild(link);
-    });
   }
 
   /* ───────────── update notifications ───────────── */
