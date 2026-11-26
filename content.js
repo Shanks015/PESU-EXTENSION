@@ -25,15 +25,65 @@ function applyDark(on) {
   document.documentElement.classList.toggle("pesu-dark-mode", !!on);
 }
 
+// Floating toggle so the mode is visible and usable even if the popup
+// isn't open.
+function injectDarkToggle() {
+  if (document.getElementById("pesu-dark-btn")) return;
+  const btn = document.createElement("button");
+  btn.id = "pesu-dark-btn";
+  btn.type = "button";
+  btn.textContent = "Dark";
+  Object.assign(btn.style, {
+    position: "fixed",
+    left: "16px",
+    bottom: "16px",
+    zIndex: "2147483647",
+    padding: "8px 12px",
+    border: "none",
+    borderRadius: "8px",
+    background: "#1b1a17",
+    color: "#e7e6e1",
+    font: "600 12px/1.2 system-ui, sans-serif",
+    cursor: "pointer",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.35)",
+  });
+
+  function sync() {
+    const on = document.documentElement.classList.contains("pesu-dark-mode");
+    btn.textContent = on ? "Light" : "Dark";
+  }
+
+  btn.addEventListener("click", () => {
+    const next = !document.documentElement.classList.contains("pesu-dark-mode");
+    applyDark(next);
+    try {
+      chrome.storage.local.set({ [DARK_KEY]: next });
+    } catch {
+      /* ignore */
+    }
+    sync();
+  });
+
+  (document.body || document.documentElement).appendChild(btn);
+  sync();
+}
+
 if (chrome.runtime?.id && chrome.storage?.local) {
   chrome.storage.local.get({ [DARK_KEY]: false }, (res) => {
-    if (chrome.runtime?.id) applyDark(res && res[DARK_KEY]);
+    if (chrome.runtime?.id) {
+      applyDark(res && res[DARK_KEY]);
+      injectDarkToggle();
+    }
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[DARK_KEY]) return;
     applyDark(changes[DARK_KEY].newValue);
+    const btn = document.getElementById("pesu-dark-btn");
+    if (btn) btn.textContent = changes[DARK_KEY].newValue ? "Light" : "Dark";
   });
+} else {
+  injectDarkToggle();
 }
 
 function upgradePdfIframes() {
