@@ -10,7 +10,8 @@
     "activeTab",
     "scripting",
     "declarativeContent",
-    "storage"
+    "storage",
+    "notifications"
   ],
   "host_permissions": [
     "https://www.pesuacademy.com/*",
@@ -31,7 +32,8 @@
       "js": [
         "naming.js",
         "attendance.js",
-        "content.js"
+        "content.js",
+        "features.js"
       ],
       "all_frames": true,
       "run_at": "document_end"

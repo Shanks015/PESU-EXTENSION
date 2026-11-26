@@ -23,6 +23,10 @@ dark-mode toggle for the site, and a 75% attendance helper.
 - **75% attendance helper** — adds a `75% plan` column next to attendance
   tables showing `Skip N classes` (when at/above 75%) or
   `Attend N classes` (when below 75%).
+- **PYQ search** — floating "Search PYQs" button + inline links to search
+  previous-year question papers per subject.
+- **Update notifications** — desktop notifications when a course page gains
+  new slides/assignments.
 - **Black & white is gone in favour of dark mode** — see note above.
 
 ## Installation (unpacked)
