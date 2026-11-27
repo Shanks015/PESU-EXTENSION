@@ -23,11 +23,12 @@ dark-mode toggle for the site, and a 75% attendance helper.
 - **75% attendance helper** — adds a `75% plan` column next to attendance
   tables showing `Skip N classes` (when at/above 75%) or
   `Attend N classes` (when below 75%).
-- **PYQ search** — floating "Search PYQs" button + inline links to search
-  previous-year question papers per subject.
+- **PYQ search by course code** — floating "PYQs" button + inline links on
+  MyCourses rows; each course is searched by its code (UE20CS301 → library
+  subject key CS301), listing every question paper of that subject, with
+  pagination across all Koha result pages.
 - **Update notifications** — desktop notifications when a course page gains
   new slides/assignments.
-- **Black & white is gone in favour of dark mode** — see note above.
 
 ## Installation (unpacked)
 
@@ -48,15 +49,31 @@ dark-mode toggle for the site, and a 75% attendance helper.
   **Try OCR** (force OCR), zoom controls.
 - Toggle **Dark mode** from the extension popup or the page.
 - On the attendance page, the `75% plan` column appears automatically.
+- On **MyCourses**, click a course's **PYQs** button (or the floating PYQ
+  button) to list its question papers, searched by course code.
+
+## PYQ search — how it works
+
+The PESU library catalogues each question paper under the *subject* part of
+the course code: `UE20CS301` is filed as `(CS301)`, `UE24CS251A` as
+`(CS251)`. Searching Koha with the full code returns nothing, so the
+extension strips the scheme prefix and section suffix to build the subject
+key, queries the Koha OPAC for `KEY)`, filters results by their trailing
+catalogue code, and follows pagination so every paper of the subject is
+listed. If no code match exists it falls back to a title query and says so
+in the panel. (Course-code mapping approach adapted from
+[ndigvijay/PESU-MAX](https://github.com/ndigvijay/PESU-MAX).)
 
 ## Project structure
 
 ```
 .
-├── manifest.json          # MV3 manifest (v4.0)
-├── background.js          # service worker: OPEN_TAB, FETCH_SIGNED_PDF
+├── manifest.json          # MV3 manifest (v4.1)
+├── background.js          # service worker: OPEN_TAB, FETCH_SIGNED_PDF,
+│                          #                 FETCH_PYQ (library search)
 ├── content.js             # content script: PDF iframe upgrade + dark mode
 ├── attendance.js          # 75% attendance helper column
+├── features.js            # PYQ search by course code + update notifications
 ├── viewer.html / viewer.js# in-browser PDF viewer + OCR + export
 ├── exporter.js            # PDF/DOCX/PPTX packaging
 ├── naming.js              # slide/module name helpers

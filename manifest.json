@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "PESU Auto PDF Unlocker",
-  "version": "4.0",
-  "description": "Replaces locked PESU PDF iframes with a selectable-text OCR viewer, plus a 75% attendance helper and black & white mode.",
+  "version": "4.1",
+  "description": "Replaces locked PESU PDF iframes with a selectable-text OCR viewer, plus dark mode, a 75% attendance helper and PYQ search.",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },

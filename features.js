@@ -1,6 +1,8 @@
 // Extra helpers for PESU Academy:
 //   1. PYQ search: on the MyCourses page, list each course and fetch all its
-//      question papers from the PESU library Koha OPAC.
+//      question papers from the PESU library Koha OPAC, keyed by course code
+//      (the library files QPs under the subject part of the code, so
+//      UE20CS301 is searched as CS301 — same trick as PESU-MAX).
 //   2. Desktop notifications when a course page gains new slides/assignments.
 (function () {
   "use strict";
@@ -11,6 +13,8 @@
   const PYQ_SUBJECT_KEY = "pesuPyqSubject";
   const SEEN_KEY = "pesuSeenItems";
   const PYQ_BASE = "http://1.6.83.11:8081/cgi-bin/koha/opac-search.pl";
+  const PYQ_PAGE_SIZE = 20; // Koha shows 20 hits per page
+  const PYQ_MAX_PAGES = 5; // safety cap: 100 papers per subject
 
   /* ───────────── course/subject detection (MyCourses page) ───────────── */
 
@@ -33,34 +37,96 @@
     return String(raw || "").replace(/\s+/g, " ").trim().split(/\s/)[0];
   }
 
-  function detectSubjects() {
-    const set = new Set();
+  function detectCourses() {
+    const byKey = new Map();
     courseRows().forEach((row) => {
-      const t = courseTitle(row);
-      if (t && t.length >= 4) set.add(t);
+      const code = courseCode(row);
+      const title = courseTitle(row);
+      if (!code && !title) return;
+      const key = code || title;
+      if (!byKey.has(key)) byKey.set(key, { code, title });
     });
-    return Array.from(set);
+    return Array.from(byKey.values());
   }
 
-  function guessSubject() {
-    const subs = detectSubjects();
-    return subs.length ? subs[0] : "";
+  /* ── course code → library subject key (adapted from PESU-MAX) ──────
+     The library catalogues each QP under the subject part of the course
+     code: UE20CS301 is filed as "(CS301)", UE24CS251A as "(CS251)".
+     Searching Koha with the full code finds nothing, so strip the scheme
+     prefix and any section suffix first (cf. ndigvijay/PESU-MAX
+     src/helpers/libraryPaperLinks.js → subjectKeyFromCourseCode). */
+
+  const SCHEME_PATTERN = /^[A-Z]{2}\d{2}(?=[A-Z])/;
+
+  function subjectKeyFromCourseCode(courseCode) {
+    const code = String(courseCode || "").trim().toUpperCase();
+    const subjectKey = code.replace(SCHEME_PATTERN, "");
+    return subjectKey.length >= 4 ? subjectKey : code;
+  }
+
+  // Every subject key worth trying for a code, most specific first:
+  //   UE24CS251A   -> ["CS251A", "CS251"]
+  //   UE21CS342AA1 -> ["CS342AA1", "CS342"]
+  //   UE20CS301    -> ["CS301"]
+  function searchKeysForCode(courseCode) {
+    const code = String(courseCode || "").trim().toUpperCase();
+    if (!code) return [];
+    const keys = [];
+    const add = (k) => {
+      const v = String(k || "").trim().toUpperCase();
+      if (v.length >= 4 && keys.indexOf(v) === -1) keys.push(v);
+    };
+    const subjectKey = subjectKeyFromCourseCode(code);
+    add(subjectKey);
+    add(subjectKey.replace(/[A-Z]+$/, "")); // drop section suffix: CS251A -> CS251
+    add((subjectKey.match(/^[A-Z]{2,4}\d{3}/) || [""])[0]); // dept + number only
+    return keys;
+  }
+
+  // Trailing "(CODE)" group of a QP title -> individual codes.
+  //   "… PESIT Autonomous (CS301)"           -> ["CS301"]
+  //   "… PESIT Autonomous (CS255/CS301)"     -> ["CS255", "CS301"]
+  function trailingCourseCodes(title) {
+    const m = String(title || "").match(/\(([A-Z0-9/ -]+)\)\s*$/i);
+    if (!m) return [];
+    return m[1].split(/[\/,\s-]+/).filter(Boolean);
+  }
+
+  // Keep only papers whose catalogue code maps back to one of our keys.
+  // Returns [] when nothing matches so the caller can try the next query.
+  function filterBySubjectKeys(results, keys) {
+    if (!keys || keys.length === 0) return results;
+    const wanted = keys.map((k) => k.toUpperCase());
+    const strict = results.filter((r) =>
+      trailingCourseCodes(r.title).some((c) => {
+        const sk = subjectKeyFromCourseCode(c);
+        return wanted.some((k) => sk === k || sk.startsWith(k) || k.startsWith(sk));
+      })
+    );
+    if (strict.length) return strict;
+    // Titles with the key in parentheses somewhere, not just at the end.
+    return results.filter((r) =>
+      wanted.some((k) => new RegExp(`\\(${k}\\)`, "i").test(r.title))
+    );
   }
 
   /* ───────────── Koha PYQ search ───────────── */
 
-  function kohaUrl(subject) {
-    return `${PYQ_BASE}?idx=&q=${encodeURIComponent(subject)}&weight_search=1`;
+  function kohaUrl(query) {
+    return `${PYQ_BASE}?idx=&q=${encodeURIComponent(query)}&weight_search=1`;
   }
 
-  function parseKohaResults(html) {
-    const results = [];
-    let doc;
+  function parseHtml(html) {
     try {
-      doc = new DOMParser().parseFromString(html, "text/html");
+      return new DOMParser().parseFromString(html, "text/html");
     } catch {
-      return results;
+      return null;
     }
+  }
+
+  function parseKohaResults(doc) {
+    const results = [];
+    if (!doc) return results;
     const links = doc.querySelectorAll("a[href*='biblionumber']");
     links.forEach((a) => {
       if (!a.classList.contains("title")) return;
@@ -79,22 +145,92 @@
     });
   }
 
-  function fetchPyqs(subject, onDone) {
-    const url = kohaUrl(subject);
+  // "Results of search for '…', page 2 of 542" -> 542
+  function kohaPageCount(doc) {
+    const text = doc && doc.body ? doc.body.textContent : "";
+    const m = text.match(/page\s+\d+\s+of\s+(\d+)/i);
+    return m ? parseInt(m[1], 10) || 1 : 1;
+  }
+
+  // Fetch every results page for one query so all QPs of a subject list,
+  // even when Koha would only show the first 20.
+  function fetchKohaPages(query, onDone) {
+    const baseUrl = kohaUrl(query);
+
     if (!chrome.runtime?.id) {
-      window.open(url, "_blank");
-      if (onDone) onDone([], url);
+      window.open(baseUrl, "_blank");
+      onDone([], baseUrl);
       return;
     }
-    chrome.runtime.sendMessage({ action: "FETCH_PYQ", url }, (res) => {
-      if (!res || !res.ok) {
-        window.open(url, "_blank");
-        if (onDone) onDone([], url);
+
+    const collected = [];
+    const seen = new Set();
+
+    const loadPage = (offset) => {
+      const url = offset ? `${baseUrl}&offset=${offset}` : baseUrl;
+      chrome.runtime.sendMessage({ action: "FETCH_PYQ", url }, (res) => {
+        if (!res || !res.ok) {
+          onDone(collected, baseUrl);
+          return;
+        }
+        const doc = parseHtml(res.html || "");
+        const pageCount = kohaPageCount(doc);
+        parseKohaResults(doc).forEach((r) => {
+          const id = r.href || r.title;
+          if (!seen.has(id)) {
+            seen.add(id);
+            collected.push(r);
+          }
+        });
+        const nextPage = Math.floor(offset / PYQ_PAGE_SIZE) + 1;
+        if (nextPage < pageCount && nextPage < PYQ_MAX_PAGES) {
+          loadPage(nextPage * PYQ_PAGE_SIZE);
+        } else {
+          onDone(collected, baseUrl);
+        }
+      });
+    };
+    loadPage(0);
+  }
+
+  // Try the course-code subject keys first, then the raw code, then the
+  // title. If no query matches the keys, fall back to the best unfiltered
+  // result (flagged so the panel can say so).
+  function runPyqSearch(course, onDone) {
+    const code = String(course.code || "").trim().toUpperCase();
+    const title = String(course.title || "").trim();
+    const keys = searchKeysForCode(code);
+    const queries = [];
+    keys.forEach((k) => queries.push(`${k})`));
+    if (code && queries.indexOf(code) === -1) queries.push(code);
+    if (title) queries.push(title);
+    if (queries.length === 0) {
+      onDone([], "", "", false);
+      return;
+    }
+
+    let fallback = null;
+    let index = 0;
+    const next = () => {
+      if (index >= queries.length) {
+        if (fallback) onDone(fallback.results, fallback.url, fallback.query, true);
+        else onDone([], kohaUrl(queries[0]), queries[0], false);
         return;
       }
-      const results = parseKohaResults(res.html || "");
-      if (onDone) onDone(results, url);
-    });
+      const query = queries[index++];
+      fetchKohaPages(query, (results) => {
+        const filtered = filterBySubjectKeys(results, keys);
+        if (filtered.length > 0) {
+          onDone(filtered, kohaUrl(query), query, false);
+          return;
+        }
+        if (results.length > 0 && !fallback) {
+          fallback = { results, url: kohaUrl(query), query };
+        }
+        next();
+      });
+    };
+    next();
   }
 
   /* ───────────── UI panel ───────────── */
@@ -125,7 +261,7 @@
     return panel;
   }
 
-  function renderSubjectList(subjects, onPick) {
+  function renderCourseList(courses, onPick) {
     const p = ensurePanel();
     p.innerHTML = "";
     const header = document.createElement("div");
@@ -147,7 +283,7 @@
     header.appendChild(close);
     p.appendChild(header);
 
-    if (!subjects || subjects.length === 0) {
+    if (!courses || courses.length === 0) {
       const empty = document.createElement("div");
       empty.textContent = "No courses detected on this page.";
       p.appendChild(empty);
@@ -155,7 +291,7 @@
     }
 
     const hint = document.createElement("div");
-    hint.textContent = "Click a course to fetch all its question papers:";
+    hint.textContent = "Click a course — QPs are searched by its course code:";
     hint.style.color = "#9a9c9e";
     hint.style.marginBottom = "6px";
     p.appendChild(hint);
@@ -164,9 +300,25 @@
     list.style.display = "flex";
     list.style.flexWrap = "wrap";
     list.style.gap = "6px";
-    subjects.forEach((s) => {
+    courses.forEach((c) => {
       const chip = document.createElement("button");
-      chip.textContent = s;
+      chip.title = c.title || c.code;
+      const label = document.createElement("span");
+      label.textContent = c.code || c.title;
+      label.style.fontWeight = "600";
+      chip.appendChild(label);
+      if (c.code && c.title) {
+        const sub = document.createElement("span");
+        sub.textContent = c.title.length > 30 ? `${c.title.slice(0, 29)}…` : c.title;
+        Object.assign(sub.style, {
+          display: "block",
+          fontWeight: "400",
+          fontSize: "10.5px",
+          opacity: "0.72",
+          marginTop: "2px",
+        });
+        chip.appendChild(sub);
+      }
       Object.assign(chip.style, {
         background: "#2a2b2f",
         color: "#e7e6e1",
@@ -175,8 +327,9 @@
         padding: "4px 8px",
         cursor: "pointer",
         font: "inherit",
+        textAlign: "left",
       });
-      chip.addEventListener("click", () => onPick(s));
+      chip.addEventListener("click", () => onPick(c));
       list.appendChild(chip);
     });
     p.appendChild(list);
@@ -187,7 +340,7 @@
     row.style.marginTop = "10px";
     const input = document.createElement("input");
     input.type = "text";
-    input.placeholder = "Or type a subject name";
+    input.placeholder = "Or type a course code (e.g. UE20CS301)";
     Object.assign(input.style, {
       flex: "1",
       padding: "6px",
@@ -209,14 +362,19 @@
     });
     go.addEventListener("click", () => {
       const v = input.value.trim();
-      if (v) onPick(v);
+      if (!v) return;
+      const upper = v.toUpperCase();
+      // A course code (CS301, UE20CS301, UQ26CA641A) is searched by code;
+      // anything else is treated as a title/keyword query.
+      if (/^[A-Z]{2,4}\d{3}[A-Z0-9]*$/.test(upper)) onPick({ code: upper, title: "" });
+      else onPick({ code: "", title: v });
     });
     row.appendChild(input);
     row.appendChild(go);
     p.appendChild(row);
   }
 
-  function showResults(subject, results, fallbackUrl) {
+  function showResults(course, results, fallbackUrl, query, isFallback) {
     const p = ensurePanel();
     p.innerHTML = "";
     const header = document.createElement("div");
@@ -225,14 +383,14 @@
     header.style.alignItems = "center";
     header.style.marginBottom = "8px";
     const title = document.createElement("strong");
-    title.textContent = `QPs: ${subject}`;
+    title.textContent = `QPs: ${course.code || query}`;
     const back = document.createElement("button");
     back.textContent = "← courses";
     back.style.background = "transparent";
     back.style.color = "#9a9c9e";
     back.style.border = "none";
     back.style.cursor = "pointer";
-    back.addEventListener("click", () => renderSubjectList(detectSubjects(), pickSubject));
+    back.addEventListener("click", () => renderCourseList(detectCourses(), pickCourse));
     const close = document.createElement("button");
     close.textContent = "✕";
     close.style.background = "transparent";
@@ -248,12 +406,28 @@
     header.appendChild(right);
     p.appendChild(header);
 
+    if (course.code && course.title) {
+      const sub = document.createElement("div");
+      sub.textContent = course.title;
+      sub.style.color = "#9a9c9e";
+      sub.style.marginBottom = "6px";
+      p.appendChild(sub);
+    }
+
+    if (isFallback && query) {
+      const note = document.createElement("div");
+      note.textContent = `No papers matched the course code — showing every library result for “${query}”.`;
+      note.style.color = "#e0a458";
+      note.style.marginBottom = "6px";
+      p.appendChild(note);
+    }
+
     if (!results || results.length === 0) {
       const empty = document.createElement("div");
       empty.textContent = "No results parsed. ";
       const link = document.createElement("a");
       link.textContent = "Open library search";
-      link.href = fallbackUrl;
+      link.href = fallbackUrl || kohaUrl(query || "");
       link.target = "_blank";
       link.style.color = "#d3a963";
       empty.appendChild(link);
@@ -287,18 +461,21 @@
     p.appendChild(list);
   }
 
-  function pickSubject(subject) {
+  function pickCourse(course) {
+    const label = course.code || course.title || "";
     try {
-      chrome.storage.local.set({ [PYQ_SUBJECT_KEY]: subject });
+      chrome.storage.local.set({ [PYQ_SUBJECT_KEY]: label });
     } catch {
       /* ignore */
     }
     const p = ensurePanel();
     p.innerHTML = "";
     const loading = document.createElement("div");
-    loading.textContent = `Fetching QPs for "${subject}"…`;
+    loading.textContent = `Fetching QPs for ${label}…`;
     p.appendChild(loading);
-    fetchPyqs(subject, (results, url) => showResults(subject, results, url));
+    runPyqSearch(course, (results, url, query, isFallback) =>
+      showResults(course, results, url, query, isFallback)
+    );
   }
 
   /* ───────────── inline PYQ links on course rows ───────────── */
@@ -306,8 +483,9 @@
   function injectInlinePyqLinks() {
     courseRows().forEach((row) => {
       if (row.dataset.pesuPyq === "1") return;
+      const code = courseCode(row);
       const title = courseTitle(row);
-      if (!title) return;
+      if (!code && !title) return;
       row.dataset.pesuPyq = "1";
 
       // Put the link in the Action cell (last td) to avoid row click navigation.
@@ -318,6 +496,7 @@
       const link = document.createElement("a");
       link.textContent = "PYQs";
       link.href = "#";
+      link.title = code ? `Question papers for ${code}` : `Question papers for ${title}`;
       Object.assign(link.style, {
         display: "inline-block",
         padding: "2px 8px",
@@ -332,7 +511,8 @@
       link.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        pickSubject(title);
+        // Search by course code, not by the (often unfindable) title.
+        pickCourse({ code, title });
       });
       // Avoid triggering row onclick.
       link.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -366,7 +546,7 @@
     });
 
     btn.addEventListener("click", () => {
-      renderSubjectList(detectSubjects(), pickSubject);
+      renderCourseList(detectCourses(), pickCourse);
     });
 
     (document.body || document.documentElement).appendChild(btn);
