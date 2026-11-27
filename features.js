@@ -260,6 +260,128 @@
     next();
   }
 
+  /* ───────────── QP view / download ─────────────
+     Koha records link their file relatively ("digital/qp/dl3682.pdf"); that
+     path lives on the PESU digital library host, not on the OPAC server. */
+
+  const LIBRARY_BASE = "http://14.143.33.149";
+  const qpPdfCache = new Map(); // record URL -> direct PDF URL
+
+  function absoluteResourceUrl(href, detailUrl) {
+    const h = String(href || "").trim();
+    if (!h) return "";
+    if (/^https?:/i.test(h)) return h;
+    const clean = h.replace(/^\/+/, "");
+    if (/^digital\//i.test(clean)) return `${LIBRARY_BASE}/${clean}`;
+    try {
+      return new URL(h, detailUrl).href;
+    } catch {
+      return "";
+    }
+  }
+
+  function resourceHref(doc) {
+    if (!doc) return "";
+    const anchors = Array.from(doc.querySelectorAll("a[href]"));
+    const byText = anchors.find((a) => /link to resource/i.test(a.textContent || ""));
+    if (byText) return byText.getAttribute("href") || "";
+    const byPath = anchors.find((a) =>
+      /digital\/[^"'?]*\.pdf/i.test(a.getAttribute("href") || "")
+    );
+    return byPath ? byPath.getAttribute("href") : "";
+  }
+
+  // Fetch the record page once and extract the direct PDF URL.
+  function resolveQpUrl(result, onDone) {
+    const detailUrl = String(result.href || "");
+    if (!detailUrl) {
+      onDone("");
+      return;
+    }
+    if (qpPdfCache.has(detailUrl)) {
+      onDone(qpPdfCache.get(detailUrl));
+      return;
+    }
+    if (!chrome.runtime?.id) {
+      onDone("");
+      return;
+    }
+    chrome.runtime.sendMessage({ action: "FETCH_PYQ", url: detailUrl }, (res) => {
+      if (!res || !res.ok) {
+        onDone("");
+        return;
+      }
+      const url = absoluteResourceUrl(resourceHref(parseHtml(res.html || "")), detailUrl);
+      if (url) qpPdfCache.set(detailUrl, url);
+      onDone(url);
+    });
+  }
+
+  function qpFileName(title) {
+    const base = String(title || "")
+      .replace(/\[[^\]]*\]/g, " ") // drop "[e resource : question paper]"
+      .replace(/[<>:"/\\|?*]/g, " ") // characters Windows forbids
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 90)
+      .trim();
+    return `${base || "question-paper"}.pdf`;
+  }
+
+  function setBtn(btn, text, pending) {
+    btn.textContent = text;
+    btn.disabled = Boolean(pending);
+    btn.style.opacity = pending ? "0.7" : "1";
+  }
+
+  // View: open the PDF directly (native viewer); fall back to the record.
+  function viewQp(result, btn) {
+    setBtn(btn, "…", true);
+    resolveQpUrl(result, (url) => {
+      const target = url || result.href || "";
+      if (!target) {
+        setBtn(btn, "View", false);
+        return;
+      }
+      const done = () => setBtn(btn, "View", false);
+      if (!chrome.runtime?.id) {
+        window.open(target, "_blank");
+        done();
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { action: "OPEN_TAB", url: target, fallbackUrl: result.href || target },
+        (res) => {
+          if (!res || !res.ok) window.open(target, "_blank");
+          done();
+        }
+      );
+    });
+  }
+
+  // Download: hand the direct URL to the browser's download manager.
+  function downloadQp(result, btn) {
+    setBtn(btn, "…", true);
+    resolveQpUrl(result, (url) => {
+      if (!url || !chrome.runtime?.id) {
+        // no direct file on record — open the page so it can be saved by hand
+        setBtn(btn, "Download", false);
+        if (result.href) window.open(result.href, "_blank");
+        return;
+      }
+      const filename = `PESU_QPs/${qpFileName(result.title)}`;
+      chrome.runtime.sendMessage({ action: "DOWNLOAD_URL", url, filename }, (res) => {
+        if (res && res.ok) {
+          setBtn(btn, "Saved ✓", false);
+        } else {
+          // last resort: the native viewer has its own save button
+          setBtn(btn, "Download", false);
+          window.open(url, "_blank");
+        }
+      });
+    });
+  }
+
   /* ───────────── UI panel ───────────── */
 
   let panel = null;
@@ -490,9 +612,55 @@
       a.textContent = r.title;
       a.href = r.href || fallbackUrl;
       a.target = "_blank";
+      a.title = "Open the library record";
       a.style.color = "#d3a963";
       a.style.textDecoration = "none";
       li.appendChild(a);
+
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "6px";
+      actions.style.marginTop = "5px";
+
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button";
+      viewBtn.textContent = "View";
+      Object.assign(viewBtn.style, {
+        padding: "2px 10px",
+        background: "#d3a963",
+        color: "#1b1a17",
+        border: "none",
+        borderRadius: "4px",
+        font: "600 11px/1.5 system-ui, sans-serif",
+        cursor: "pointer",
+      });
+      viewBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        viewQp(r, viewBtn);
+      });
+
+      const dlBtn = document.createElement("button");
+      dlBtn.type = "button";
+      dlBtn.textContent = "Download";
+      Object.assign(dlBtn.style, {
+        padding: "2px 10px",
+        background: "transparent",
+        color: "#d3a963",
+        border: "1px solid #d3a963",
+        borderRadius: "4px",
+        font: "600 11px/1.5 system-ui, sans-serif",
+        cursor: "pointer",
+      });
+      dlBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        downloadQp(r, dlBtn);
+      });
+
+      actions.appendChild(viewBtn);
+      actions.appendChild(dlBtn);
+      li.appendChild(actions);
       list.appendChild(li);
     });
     p.appendChild(list);

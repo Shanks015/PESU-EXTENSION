@@ -27,7 +27,9 @@ dark-mode toggle for the site, and a 75% attendance helper.
   MyCourses rows; each course is searched by its code (UE20CS301 → library
   subject key CS301), listing every question paper of that subject, with
   pagination across all Koha result pages. Records the library doesn't mark
-  as question papers (general books) are filtered out.
+  as question papers (general books) are filtered out. Every result has a
+  **View** button (opens the paper's PDF in a new tab) and a **Download**
+  button (saves it straight to `Downloads/PESU_QPs/`).
 - **Update notifications** — desktop notifications when a course page gains
   new slides/assignments.
 
@@ -51,7 +53,9 @@ dark-mode toggle for the site, and a 75% attendance helper.
 - Toggle **Dark mode** from the extension popup or the page.
 - On the attendance page, the `75% plan` column appears automatically.
 - On **MyCourses**, click a course's **PYQs** button (or the floating PYQ
-  button) to list its question papers, searched by course code.
+  button) to list its question papers, searched by course code. Use
+  **View** to read a paper in a new tab or **Download** to save it as
+  `PESU_QPs/<title>.pdf`.
 
 ## PYQ search — how it works
 
@@ -70,12 +74,13 @@ mapping approach adapted from
 
 ```
 .
-├── manifest.json          # MV3 manifest (v4.2)
-├── background.js          # service worker: OPEN_TAB, FETCH_SIGNED_PDF,
-│                          #                 FETCH_PYQ (library search)
+├── manifest.json          # MV3 manifest (v4.3)
+├── background.js          # service worker: OPEN_TAB, DOWNLOAD_URL,
+│                          #                 FETCH_SIGNED_PDF, FETCH_PYQ
 ├── content.js             # content script: PDF iframe upgrade + dark mode
 ├── attendance.js          # 75% attendance helper column
-├── features.js            # PYQ search by course code + update notifications
+├── features.js            # PYQ search by course code (view/download) +
+│                          #                 update notifications
 ├── viewer.html / viewer.js# in-browser PDF viewer + OCR + export
 ├── exporter.js            # PDF/DOCX/PPTX packaging
 ├── naming.js              # slide/module name helpers

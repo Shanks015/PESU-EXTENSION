@@ -73,6 +73,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === "DOWNLOAD_URL") {
+    try {
+      chrome.downloads.download(
+        { url: request.url, filename: request.filename || "", saveAs: false },
+        (id) => {
+          const error = chrome.runtime.lastError;
+          sendResponse({ ok: !error && id !== undefined, id, error: error && error.message });
+        }
+      );
+    } catch (err) {
+      sendResponse({ ok: false, error: err.message || String(err) });
+    }
+    return true;
+  }
+
   if (request.action === "FETCH_PYQ") {
     (async () => {
       try {
