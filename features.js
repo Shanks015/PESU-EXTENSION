@@ -24,17 +24,35 @@
     return Array.from(document.querySelectorAll('tr[id^="rowWiseCourseContent_"]'));
   }
 
-  function courseTitle(row) {
-    const cells = row.querySelectorAll("td");
-    // second cell holds the title (with possible whitespace/newlines)
-    const raw = cells.length >= 2 ? cells[1].textContent : "";
-    return String(raw || "").replace(/\s+/g, " ").trim();
+  // Course code shapes seen on MyCourses: UE20CS301, UE24CS251A,
+  // UQ26CA641A, CS301. Used to recognise the code cell *and* to tell a
+  // typed course code apart from a typed title.
+  const COURSE_CODE_SHAPE = /^[A-Z]{1,4}\d{2}[A-Z0-9]+$/i;
+
+  function courseCells(row) {
+    return Array.from(row.querySelectorAll("td")).map((td) =>
+      String(td.textContent || "").replace(/\s+/g, " ").trim()
+    );
   }
 
   function courseCode(row) {
-    const cells = row.querySelectorAll("td");
-    const raw = cells.length >= 1 ? cells[0].textContent : "";
-    return String(raw || "").replace(/\s+/g, " ").trim().split(/\s/)[0];
+    // scan every cell: some layouts put a serial/status cell first
+    for (const cell of courseCells(row)) {
+      const first = cell.split(/\s/)[0] || "";
+      if (COURSE_CODE_SHAPE.test(first)) return first.toUpperCase();
+    }
+    return "";
+  }
+
+  function courseTitle(row) {
+    const cells = courseCells(row);
+    const codeAt = cells.findIndex((c) =>
+      COURSE_CODE_SHAPE.test(c.split(/\s/)[0] || "")
+    );
+    // standard layout is [code, title, type, status, action]
+    if (codeAt >= 0 && cells[codeAt + 1]) return cells[codeAt + 1];
+    // no code cell: first non-trivial cell is the title
+    return cells.find((c) => c && !/^\d+$/.test(c)) || "";
   }
 
   function detectCourses() {
@@ -193,6 +211,15 @@
     loadPage(0);
   }
 
+  // Only records the library marks as question papers — stops a title
+  // search from filling the panel with general books (e.g. "Automate the
+  // boring stuff with python"). If nothing at all is marked, keep the
+  // original list rather than showing nothing.
+  function preferQuestionPapers(results) {
+    const qps = results.filter((r) => /question paper/i.test(r.title));
+    return qps.length > 0 ? qps : results;
+  }
+
   // Try the course-code subject keys first, then the raw code, then the
   // title. If no query matches the keys, fall back to the best unfiltered
   // result (flagged so the panel can say so).
@@ -219,13 +246,13 @@
       }
       const query = queries[index++];
       fetchKohaPages(query, (results) => {
-        const filtered = filterBySubjectKeys(results, keys);
+        const filtered = preferQuestionPapers(filterBySubjectKeys(results, keys));
         if (filtered.length > 0) {
           onDone(filtered, kohaUrl(query), query, false);
           return;
         }
         if (results.length > 0 && !fallback) {
-          fallback = { results, url: kohaUrl(query), query };
+          fallback = { results: preferQuestionPapers(results), url: kohaUrl(query), query };
         }
         next();
       });
@@ -363,10 +390,9 @@
     go.addEventListener("click", () => {
       const v = input.value.trim();
       if (!v) return;
-      const upper = v.toUpperCase();
       // A course code (CS301, UE20CS301, UQ26CA641A) is searched by code;
       // anything else is treated as a title/keyword query.
-      if (/^[A-Z]{2,4}\d{3}[A-Z0-9]*$/.test(upper)) onPick({ code: upper, title: "" });
+      if (COURSE_CODE_SHAPE.test(v)) onPick({ code: v.toUpperCase(), title: "" });
       else onPick({ code: "", title: v });
     });
     row.appendChild(input);
@@ -416,7 +442,7 @@
 
     if (isFallback && query) {
       const note = document.createElement("div");
-      note.textContent = `No papers matched the course code — showing every library result for “${query}”.`;
+      note.textContent = `No QPs matched the course code — these came from the fallback search for “${query}”.`;
       note.style.color = "#e0a458";
       note.style.marginBottom = "6px";
       p.appendChild(note);
@@ -435,8 +461,19 @@
       return;
     }
 
+    const allMarked = results.every((r) => /question paper/i.test(r.title));
+    if (!allMarked) {
+      const warn = document.createElement("div");
+      warn.textContent = "None of these are marked as question papers — they are general library items.";
+      warn.style.color = "#e0a458";
+      warn.style.marginBottom = "6px";
+      p.appendChild(warn);
+    }
+
     const count = document.createElement("div");
-    count.textContent = `${results.length} question paper(s) found:`;
+    count.textContent = allMarked
+      ? `${results.length} question paper(s) found:`
+      : `${results.length} library record(s) found:`;
     count.style.color = "#9a9c9e";
     count.style.marginBottom = "6px";
     p.appendChild(count);

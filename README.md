@@ -26,7 +26,8 @@ dark-mode toggle for the site, and a 75% attendance helper.
 - **PYQ search by course code** — floating "PYQs" button + inline links on
   MyCourses rows; each course is searched by its code (UE20CS301 → library
   subject key CS301), listing every question paper of that subject, with
-  pagination across all Koha result pages.
+  pagination across all Koha result pages. Records the library doesn't mark
+  as question papers (general books) are filtered out.
 - **Update notifications** — desktop notifications when a course page gains
   new slides/assignments.
 
@@ -59,16 +60,17 @@ the course code: `UE20CS301` is filed as `(CS301)`, `UE24CS251A` as
 `(CS251)`. Searching Koha with the full code returns nothing, so the
 extension strips the scheme prefix and section suffix to build the subject
 key, queries the Koha OPAC for `KEY)`, filters results by their trailing
-catalogue code, and follows pagination so every paper of the subject is
-listed. If no code match exists it falls back to a title query and says so
-in the panel. (Course-code mapping approach adapted from
+catalogue code, drops records not marked as question papers, and follows
+pagination so every paper of the subject is listed. If no code match exists
+it falls back to a title query and says so in the panel. (Course-code
+mapping approach adapted from
 [ndigvijay/PESU-MAX](https://github.com/ndigvijay/PESU-MAX).)
 
 ## Project structure
 
 ```
 .
-├── manifest.json          # MV3 manifest (v4.1)
+├── manifest.json          # MV3 manifest (v4.2)
 ├── background.js          # service worker: OPEN_TAB, FETCH_SIGNED_PDF,
 │                          #                 FETCH_PYQ (library search)
 ├── content.js             # content script: PDF iframe upgrade + dark mode
